@@ -17,7 +17,7 @@
 // <website>https://github.com/facebook-csharp-sdk/simple-json</website>
 //-----------------------------------------------------------------------
 
-// VERSION: 0.26.0
+// VERSION: 0.25.0
 
 // NOTE: uncomment the following line to make SimpleJson class internal.
 //#define SIMPLE_JSON_INTERNAL
@@ -38,8 +38,6 @@
 // NOTE: uncomment the following line if you are compiling under Window Metro style application/library.
 // usually already defined in properties
 //#define NETFX_CORE;
-
-// If you are targetting WinStore, WP8 and NET4.5+ PCL make sure to #define SIMPLE_JSON_TYPEINFO;
 
 // original json parsing code from http://techblog.procurios.nl/k/618/news/view/14605/14863/How-do-I-write-my-own-parser-for-JSON.html
 
@@ -483,6 +481,17 @@ namespace RestSharp
 
 namespace RestSharp
 {
+    public class SerializerOptions
+    {
+        public SerializerOptions()
+        {
+            // Set defaults
+            SkipNullProperties = false;
+        }
+
+        public bool SkipNullProperties { get; set; }
+    }
+
     /// <summary>
     /// This class encodes and decodes JSON strings.
     /// Spec. details, see http://www.json.org/
@@ -496,6 +505,7 @@ namespace RestSharp
 #else
     public
 #endif
+
  static class SimpleJson
     {
         private const int TOKEN_NONE = 0;
@@ -537,7 +547,7 @@ namespace RestSharp
         /// <returns>
         /// Returns true if successfull otherwise false.
         /// </returns>
-        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification="Need to support .NET 2")]
+        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification = "Need to support .NET 2")]
         public static bool TryDeserializeObject(string json, out object obj)
         {
             bool success = true;
@@ -582,16 +592,16 @@ namespace RestSharp
         /// <param name="json">A IDictionary&lt;string,object> / IList&lt;object></param>
         /// <param name="jsonSerializerStrategy">Serializer strategy to use</param>
         /// <returns>A JSON encoded string, or null if object 'json' is not serializable</returns>
-        public static string SerializeObject(object json, IJsonSerializerStrategy jsonSerializerStrategy)
+        public static string SerializeObject(object json, IJsonSerializerStrategy jsonSerializerStrategy, SerializerOptions options = null)
         {
             StringBuilder builder = new StringBuilder(BUILDER_CAPACITY);
-            bool success = SerializeValue(jsonSerializerStrategy, json, builder);
+            bool success = SerializeValue(jsonSerializerStrategy, json, builder, options);
             return (success ? builder.ToString() : null);
         }
 
-        public static string SerializeObject(object json)
+        public static string SerializeObject(object json, SerializerOptions options = null)
         {
-            return SerializeObject(json, CurrentJsonSerializerStrategy);
+            return SerializeObject(json, CurrentJsonSerializerStrategy, options);
         }
 
         public static string EscapeToJavascriptString(string jsonString)
@@ -985,7 +995,7 @@ namespace RestSharp
             return TOKEN_NONE;
         }
 
-        static bool SerializeValue(IJsonSerializerStrategy jsonSerializerStrategy, object value, StringBuilder builder)
+        static bool SerializeValue(IJsonSerializerStrategy jsonSerializerStrategy, object value, StringBuilder builder, SerializerOptions options = null)
         {
             bool success = true;
             string stringValue = value as string;
@@ -996,32 +1006,44 @@ namespace RestSharp
                 IDictionary<string, object> dict = value as IDictionary<string, object>;
                 if (dict != null)
                 {
-                    success = SerializeObject(jsonSerializerStrategy, dict.Keys, dict.Values, builder);
+                    success = SerializeObject(jsonSerializerStrategy, dict.Keys, dict.Values, builder, options);
                 }
                 else
                 {
                     IDictionary<string, string> stringDictionary = value as IDictionary<string, string>;
                     if (stringDictionary != null)
                     {
-                        success = SerializeObject(jsonSerializerStrategy, stringDictionary.Keys, stringDictionary.Values, builder);
+                        success = SerializeObject(jsonSerializerStrategy, stringDictionary.Keys, stringDictionary.Values, builder, options);
                     }
                     else
                     {
                         IEnumerable enumerableValue = value as IEnumerable;
                         if (enumerableValue != null)
-                            success = SerializeArray(jsonSerializerStrategy, enumerableValue, builder);
+                            success = SerializeArray(jsonSerializerStrategy, enumerableValue, builder, options);
                         else if (IsNumeric(value))
                             success = SerializeNumber(value, builder);
                         else if (value is bool)
                             builder.Append((bool)value ? "true" : "false");
                         else if (value == null)
-                            builder.Append("null");
+                        {
+                            if (options == null)
+                            {
+                                builder.Append("null");
+                            }
+                            else
+                            {
+                                if (!options.SkipNullProperties)
+                                {
+                                    builder.Append("null");
+                                }
+                            }
+                        }
                         else
                         {
                             object serializedObject;
                             success = jsonSerializerStrategy.TrySerializeNonPrimitiveObject(value, out serializedObject);
                             if (success)
-                                SerializeValue(jsonSerializerStrategy, serializedObject, builder);
+                                SerializeValue(jsonSerializerStrategy, serializedObject, builder, options);
                         }
                     }
                 }
@@ -1029,7 +1051,7 @@ namespace RestSharp
             return success;
         }
 
-        static bool SerializeObject(IJsonSerializerStrategy jsonSerializerStrategy, IEnumerable keys, IEnumerable values, StringBuilder builder)
+        static bool SerializeObject(IJsonSerializerStrategy jsonSerializerStrategy, IEnumerable keys, IEnumerable values, StringBuilder builder, SerializerOptions options = null)
         {
             builder.Append("{");
             IEnumerator ke = keys.GetEnumerator();
@@ -1039,15 +1061,19 @@ namespace RestSharp
             {
                 object key = ke.Current;
                 object value = ve.Current;
+
+                string stringKey = key as string;
+
+                if ((options != null) && (stringKey != null) && (options.SkipNullProperties) && (value == null))
+                    continue;
                 if (!first)
                     builder.Append(",");
-                string stringKey = key as string;
                 if (stringKey != null)
                     SerializeString(stringKey, builder);
                 else
-                    if (!SerializeValue(jsonSerializerStrategy, value, builder)) return false;
+                    if (!SerializeValue(jsonSerializerStrategy, value, builder, options)) return false;
                 builder.Append(":");
-                if (!SerializeValue(jsonSerializerStrategy, value, builder))
+                if (!SerializeValue(jsonSerializerStrategy, value, builder, options))
                     return false;
                 first = false;
             }
@@ -1055,7 +1081,7 @@ namespace RestSharp
             return true;
         }
 
-        static bool SerializeArray(IJsonSerializerStrategy jsonSerializerStrategy, IEnumerable anArray, StringBuilder builder)
+        static bool SerializeArray(IJsonSerializerStrategy jsonSerializerStrategy, IEnumerable anArray, StringBuilder builder, SerializerOptions options = null)
         {
             builder.Append("[");
             bool first = true;
@@ -1063,7 +1089,7 @@ namespace RestSharp
             {
                 if (!first)
                     builder.Append(",");
-                if (!SerializeValue(jsonSerializerStrategy, value, builder))
+                if (!SerializeValue(jsonSerializerStrategy, value, builder, options))
                     return false;
                 first = false;
             }
@@ -1182,7 +1208,7 @@ namespace RestSharp
 
 #endif
     }
-    
+
     [GeneratedCode("simple-json", "1.0.0")]
 #if SIMPLE_JSON_INTERNAL
     internal
@@ -1191,7 +1217,7 @@ namespace RestSharp
 #endif
  interface IJsonSerializerStrategy
     {
-        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification="Need to support .NET 2")]
+        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification = "Need to support .NET 2")]
         bool TrySerializeNonPrimitiveObject(object input, out object output);
         object DeserializeObject(object value, Type type);
     }
@@ -1290,12 +1316,12 @@ namespace RestSharp
             if (type == null) throw new ArgumentNullException("type");
             string str = value as string;
 
-            if (type == typeof (Guid) && string.IsNullOrEmpty(str))
+            if (type == typeof(Guid) && string.IsNullOrEmpty(str))
                 return default(Guid);
 
             if (value == null)
                 return null;
-            
+
             object obj = null;
 
             if (str != null)
@@ -1325,16 +1351,20 @@ namespace RestSharp
             }
             else if (value is bool)
                 return value;
-            
+
             bool valueIsLong = value is long;
             bool valueIsDouble = value is double;
             if ((valueIsLong && type == typeof(long)) || (valueIsDouble && type == typeof(double)))
                 return value;
             if ((valueIsDouble && type != typeof(double)) || (valueIsLong && type != typeof(long)))
             {
-                obj = type == typeof(int) || type == typeof(long) || type == typeof(double) || type == typeof(float) || type == typeof(bool) || type == typeof(decimal) || type == typeof(byte) || type == typeof(short)
-                            ? Convert.ChangeType(value, type, CultureInfo.InvariantCulture)
-                            : value;
+                obj =
+#if NETFX_CORE
+ type == typeof(int) || type == typeof(long) || type == typeof(double) || type == typeof(float) || type == typeof(bool) || type == typeof(decimal) || type == typeof(byte) || type == typeof(short)
+#else
+ typeof(IConvertible).IsAssignableFrom(type)
+#endif
+ ? Convert.ChangeType(value, type, CultureInfo.InvariantCulture) : value;
             }
             else
             {
@@ -1416,7 +1446,7 @@ namespace RestSharp
             return Convert.ToDouble(p, CultureInfo.InvariantCulture);
         }
 
-        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification="Need to support .NET 2")]
+        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification = "Need to support .NET 2")]
         protected virtual bool TrySerializeKnownTypes(object input, out object output)
         {
             bool returnValue = true;
@@ -1441,7 +1471,7 @@ namespace RestSharp
             }
             return returnValue;
         }
-        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification="Need to support .NET 2")]
+        [SuppressMessage("Microsoft.Design", "CA1007:UseGenericsWhereAppropriate", Justification = "Need to support .NET 2")]
         protected virtual bool TrySerializeUnknownTypes(object input, out object output)
         {
             if (input == null) throw new ArgumentNullException("input");
@@ -1543,7 +1573,7 @@ namespace RestSharp
     namespace Reflection
     {
         // This class is meant to be copied into other libraries. So we want to exclude it from Code Analysis rules
- 	    // that might be in place in the target project.
+        // that might be in place in the target project.
         [GeneratedCode("reflection-utils", "1.0.0")]
 #if SIMPLE_JSON_REFLECTION_UTILS_PUBLIC
         public
